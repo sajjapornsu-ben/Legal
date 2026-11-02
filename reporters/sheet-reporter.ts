@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import type {
   FullConfig, FullResult, Reporter, Suite, TestCase, TestResult,
 } from '@playwright/test/reporter';
@@ -12,7 +13,10 @@ type Scenario = {
   scenario_id: string; module: string; title: string; priority: string;
   precondition: string; expected: string; file: string;
   steps: string[]; steps_complete: boolean;
+  file_created_by: string; file_created_at: string;   // ใครสร้างไฟล์ .ts (จาก Git)
+  file_updated_by: string; file_updated_at: string;   // ใครแก้ไฟล์ล่าสุด (จาก Git)
 };
+type GitInfo = { created_by: string; created_at: string; updated_by: string; updated_at: string };
 type Result = {
   scenario_id: string; status: 'Passed' | 'Failed' | 'Not Run';
   duration_ms: number; error: string; retry: number;
@@ -21,6 +25,7 @@ type Result = {
 export default class SheetReporter implements Reporter {
   private scenarios = new Map<string, Scenario>();
   private results = new Map<string, Result>();
+  private git = new Map<string, GitInfo>();
 
   /** ก่อนเริ่มรัน: อ่าน Scenario ทุกตัวจากไฟล์ .ts */
   onBegin(_config: FullConfig, suite: Suite) {
@@ -29,6 +34,9 @@ export default class SheetReporter implements Reporter {
       if (!id || this.scenarios.has(id)) continue;
       const note = (type: string) =>
         test.annotations.filter(a => a.type === type).map(a => a.description ?? '').join('\n');
+      const file = test.location.file;
+      if (!this.git.has(file)) this.git.set(file, gitInfo(file));
+      const g = this.git.get(file)!;
       this.scenarios.set(id, {
         scenario_id: id,
         module: test.parent.type === 'describe'
@@ -41,6 +49,10 @@ export default class SheetReporter implements Reporter {
         file: path.relative(process.cwd(), test.location.file),
         steps: [],
         steps_complete: false,
+        file_created_by: note('author') || g.created_by,     // ระบุเองได้ด้วย annotation 'author'
+        file_created_at: g.created_at,
+        file_updated_by: g.updated_by,
+        file_updated_at: g.updated_at,
       });
     }
   }
@@ -150,6 +162,26 @@ function scenarioId(test: TestCase): string | undefined {
 function cleanTitle(title: string, id: string) {
   const t = title.trim();
   return t.startsWith(id) ? t.slice(id.length).replace(/^[\s:.)\]–-]+/, '') || t : t;
+}
+
+/** อ่านจาก Git ว่าใครสร้างไฟล์ (commit แรก) และใครแก้ล่าสุด */
+function gitInfo(file: string): GitInfo {
+  const git = (args: string[]) => {
+    try {
+      return execFileSync('git', args, {
+        cwd: path.dirname(file), encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim();
+    } catch { return ''; }
+  };
+  const split = (line: string) => { const [by = '', at = ''] = line.split('|'); return { by, at }; };
+  const added = git(['log', '--follow', '--diff-filter=A', '--format=%an|%aI', '--', file]).split('\n').filter(Boolean);
+  const first = split(added[added.length - 1] ?? '');               // commit แรกที่เพิ่มไฟล์นี้
+  const last = split(git(['log', '-1', '--format=%an|%aI', '--', file]));
+  if (!first.by) {                                                  // ไฟล์ใหม่ที่ยังไม่ได้ commit
+    const me = git(['config', 'user.name']);
+    return { created_by: me ? `${me} (ยังไม่ commit)` : '', created_at: '', updated_by: '', updated_at: '' };
+  }
+  return { created_by: first.by, created_at: first.at, updated_by: last.by, updated_at: last.at };
 }
 
 /** ส่งได้เฉพาะ Apps Script ผ่าน https (localhost อนุญาตไว้ทดสอบ) */
