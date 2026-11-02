@@ -51,7 +51,7 @@ export default class SheetReporter implements Reporter {
     if (!id) return;
     const passed = result.status === 'passed';
     const browser = test.parent.project()?.name ?? '';
-    const msg = stripColor(result.error?.message ?? '');
+    const msg = redact(stripColor(result.error?.message ?? ''));
     this.results.set(`${id}::${browser}`, {      // retry จะเขียนทับ เหลือผลสุดท้ายของแต่ละ browser
       scenario_id: id,
       status: passed ? 'Passed' : result.status === 'skipped' ? 'Not Run' : 'Failed',
@@ -70,6 +70,10 @@ export default class SheetReporter implements Reporter {
     const token = process.env.QA_HUB_TOKEN;
     if (!url || !token) {
       console.log('[QA Hub] ไม่พบ QA_HUB_URL หรือ QA_HUB_TOKEN ข้ามการส่งผล');
+      return;
+    }
+    if (!isSafeEndpoint(url)) {
+      console.log('[QA Hub] QA_HUB_URL ต้องเป็น https://script.google.com/... เท่านั้น ข้ามการส่งผล');
       return;
     }
     const results = mergeBrowsers([...this.results.values()]);
@@ -101,10 +105,17 @@ export default class SheetReporter implements Reporter {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(60_000),             // ไม่ค้างเกิน 60 วินาที
       });
-      console.log(`[QA Hub] ส่งผล ${payload.results.length} รายการ →`, await res.text());
+      const text = await res.text();
+      if (text.trimStart().startsWith('<')) {
+        console.log(`[QA Hub] ส่งไม่สำเร็จ: ได้หน้าเว็บกลับมาแทนผลลัพธ์ (HTTP ${res.status}) ` +
+          '— เช็กว่า QA_HUB_URL ถูกต้อง ลงท้าย /exec และ Deploy เป็น Anyone');
+      } else {
+        console.log(`[QA Hub] ส่งผล ${payload.results.length} รายการ →`, text.slice(0, 300));
+      }
     } catch (err) {
-      console.log('[QA Hub] ส่งผลไม่สำเร็จ:', err);   // ไม่ทำให้ test fail
+      console.log('[QA Hub] ส่งผลไม่สำเร็จ:', (err as Error).message);   // ไม่ทำให้ test fail
     }
   }
 
@@ -139,6 +150,26 @@ function scenarioId(test: TestCase): string | undefined {
 function cleanTitle(title: string, id: string) {
   const t = title.trim();
   return t.startsWith(id) ? t.slice(id.length).replace(/^[\s:.)\]–-]+/, '') || t : t;
+}
+
+/** ส่งได้เฉพาะ Apps Script ผ่าน https (localhost อนุญาตไว้ทดสอบ) */
+function isSafeEndpoint(raw: string) {
+  try {
+    const u = new URL(raw);
+    if (u.protocol === 'https:' && u.hostname === 'script.google.com') return true;
+    return u.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(u.hostname);
+  } catch { return false; }
+}
+
+/** ซ่อนรหัสผ่าน / token ที่อาจติดมากับข้อความ error ก่อนส่งออกไป */
+function redact(text: string) {
+  let out = text;
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value && value.length >= 4 && /PASS|PWD|TOKEN|SECRET|KEY|AUTH|COOKIE/i.test(key)) {
+      out = out.split(value).join('***');
+    }
+  }
+  return out.replace(/(Bearer\s+)[\w.~+/=-]+/gi, '$1***');
 }
 
 function stripColor(s: string) {
