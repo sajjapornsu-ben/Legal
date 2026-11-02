@@ -15,7 +15,7 @@
 4. [สร้างไฟล์ reporter](#4-สร้างไฟล์-reporter)
 5. [แก้ไฟล์ playwright.config.ts](#5-แก้ไฟล์-playwrightconfigts)
 6. [สร้างไฟล์ .env และกันไม่ให้ขึ้น Git](#6-สร้างไฟล์-env-และกันไม่ให้ขึ้น-git)
-7. [เขียนเทสให้ขึ้น Dashboard](#7-เขียนเทสให้ขึ้น-dashboard)
+7. [เขียนเทสให้ขึ้น Dashboard](#7-เขียนเทสให้ขึ้น-dashboard) (มีไฟล์ CLAUDE.md สำหรับให้ Claude ช่วยเขียน)
 8. [ทดลองรันในเครื่อง](#8-ทดลองรันในเครื่อง)
 9. [Publish to GitHub](#9-publish-to-github)
 10. [ให้ GitHub ส่งผลอัตโนมัติ](#10-ให้-github-ส่งผลอัตโนมัติ)
@@ -492,6 +492,76 @@ test.describe('Booking', () => {                         // ← Module
   });
 });
 ```
+
+### 7.1 ให้ Claude ช่วยเขียนเทส (ไฟล์ CLAUDE.md)
+
+ถ้าใช้ Claude ช่วยเขียนเทส ให้สร้างไฟล์ **`CLAUDE.md`** ไว้ที่โฟลเดอร์หลักของโปรเจกต์ (ระดับเดียวกับ `playwright.config.ts`) Claude Code จะอ่านไฟล์นี้เองทุกครั้งก่อนเริ่มงาน และเขียนเทสตามรูปแบบที่ Dashboard ต้องการ ไม่ต้องบอกซ้ำทุกรอบ
+
+ไฟล์นี้ไม่มีความลับ **commit ขึ้น Git ได้** เพื่อนในทีมจะได้ใช้กติกาเดียวกัน
+
+**`CLAUDE.md`**
+
+````markdown
+# กติกาการเขียนเทส Playwright ของโปรเจกต์นี้
+
+เทสทุกตัวจะถูกส่งผลเข้า QA Pulse Dashboard ผ่าน `reporters/sheet-reporter.ts`
+ต้องเขียนตามรูปแบบนี้ ไม่อย่างนั้นข้อมูลจะไม่ขึ้น Dashboard
+
+## รูปแบบที่ต้องใช้
+- เขียนเป็น TypeScript ไฟล์ `tests/<ชื่อ module>.spec.ts`
+- ครอบเทสด้วย `test.describe('<ชื่อ Module>', ...)` เช่น 'Login', 'Booking'
+- **ชื่อเทสต้องขึ้นต้นด้วยรหัส Scenario** ตามด้วยช่องว่างและคำอธิบายภาษาไทย
+  เช่น `'LG-17 เข้า /dashboard ก่อน login ต้อง redirect ไป login'`
+  - ห้ามมีอะไรนำหน้ารหัส และ 1 รหัส = 1 เทส ห้ามซ้ำ
+  - ใช้รหัสตามแผนเทส ถ้าแผนไม่มีรหัส ให้ถามก่อน ห้ามตั้งเอง
+- ใส่ `tag` priority เป็น `'@high'`, `'@medium'` หรือ `'@low'` อย่างใดอย่างหนึ่ง
+- ใส่ `annotation`:
+  - `{ type: 'precondition', description: '...' }` (ถ้ามี)
+  - `{ type: 'expected', description: '...' }` (ต้องมี)
+- แบ่งทุกขั้นตอนด้วย `await test.step('<ขั้นตอนภาษาไทย>', async () => { ... })`
+  ชื่อ step ต้องอ่านเข้าใจสำหรับคนที่ไม่ใช่โปรแกรมเมอร์ เพราะจะไปแสดงใน Dashboard
+
+## ตัวอย่าง
+```typescript
+import { test, expect } from '@playwright/test';
+
+test.describe('Login', () => {
+  test('LG-17 เข้า /dashboard ก่อน login ต้อง redirect ไป login', {
+    tag: '@high',
+    annotation: [
+      { type: 'precondition', description: 'ยังไม่ได้ login' },
+      { type: 'expected', description: 'ถูกพาไปหน้า login' },
+    ],
+  }, async ({ page }) => {
+    await test.step('เปิด /dashboard โดยตรง', async () => {
+      await page.goto('/dashboard');
+    });
+    await test.step('ตรวจว่าถูกพาไปหน้า login', async () => {
+      await expect(page).toHaveURL(/login/);
+    });
+  });
+});
+```
+
+## ข้อห้าม
+- ห้ามแก้ไฟล์ `reporters/sheet-reporter.ts`, `playwright.config.ts` และ `.github/workflows/`
+  ยกเว้นได้รับคำสั่งตรงๆ
+- ห้ามเขียนรหัสผ่าน / token ลงในไฟล์เทส ให้อ่านจาก `process.env` เช่น `process.env.TEST_PASSWORD`
+- ห้ามเปิด อ่าน หรือแสดงค่าในไฟล์ `.env`
+- ใช้ `baseURL` จาก config เช่น `page.goto('/login')` ไม่ใส่ URL เต็ม
+- ใช้ locator แบบ `getByRole`, `getByLabel`, `getByText` ก่อน CSS selector
+````
+
+**ตัวอย่างคำสั่ง** (พิมพ์สั่ง Claude ได้เลย):
+
+| อยากให้ทำ | พิมพ์ว่า |
+| --- | --- |
+| เขียนเทสใหม่จากแผน | `เขียนเทสจาก TEST-PLAN-LOGIN.md ตามกติกาใน CLAUDE.md ทำ LG-1 ถึง LG-10 ก่อน` |
+| แปลงเทสเดิมให้ขึ้น Dashboard | `แก้ไฟล์ในโฟลเดอร์ tests ให้ตรงตามกติกาใน CLAUDE.md ห้ามเปลี่ยน logic ของเทส แค่เพิ่ม describe, tag, annotation และ test.step ใช้ข้อมูลจาก TEST-PLAN-LOGIN.md` |
+
+- ถ้าใช้ **Claude ในแชต** (ไม่ใช่ Claude Code) ให้คัดลอกเนื้อหา `CLAUDE.md` ไปวางก่อน แล้วต่อด้วยคำสั่ง พร้อมแนบแผนเทส `.md` ไปด้วย
+- เวลาให้แปลงไฟล์เดิม ใส่ประโยค **"ห้ามเปลี่ยน logic ของเทส"** ไว้เสมอ แล้วรัน `npx playwright test` เช็กอีกรอบว่ายังผ่านเหมือนเดิม
+- Claude เขียนเสร็จแล้ว ให้อ่านทวนทุกครั้งก่อน commit
 
 ---
 
